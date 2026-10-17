@@ -5,6 +5,7 @@ import com.maxrave.spotify.model.response.spotify.CanvasResponse
 import com.maxrave.spotify.model.response.spotify.ClientTokenResponse
 import com.maxrave.spotify.model.response.spotify.PersonalTokenResponse
 import com.maxrave.spotify.model.response.spotify.SpotifyLyricsResponse
+import com.maxrave.spotify.model.response.spotify.playlist.SpotifyHomeResponse
 import com.maxrave.spotify.model.response.spotify.playlist.SpotifyLibraryPlaylistsResponse
 import com.maxrave.spotify.model.response.spotify.playlist.SpotifyPlaylistTracksResponse
 import com.maxrave.spotify.model.response.spotify.search.SpotifySearchResponse
@@ -77,6 +78,34 @@ class Spotify {
             .body<SpotifySearchResponse>()
     }
 
+    /**
+     * Search Spotify's whole track catalog (not the user's library).
+     */
+    suspend fun searchTracks(
+        query: String,
+        authToken: String,
+        clientToken: String,
+        limit: Int = 20,
+    ) = runCatching {
+        spotifyClient
+            .searchSpotifyTracks(query, authToken, clientToken, limit)
+            .body<SpotifySearchResponse>()
+    }
+
+    /**
+     * Search Spotify's whole playlist catalog (not the user's library).
+     */
+    suspend fun searchPlaylists(
+        query: String,
+        authToken: String,
+        clientToken: String,
+        limit: Int = 20,
+    ) = runCatching {
+        spotifyClient
+            .searchSpotifyPlaylists(query, authToken, clientToken, limit)
+            .body<SpotifySearchResponse>()
+    }
+
     suspend fun getSpotifyLyrics(
         trackId: String,
         token: String,
@@ -110,6 +139,20 @@ class Spotify {
         spotifyClient
             .getSpotifyUserPlaylists(authToken, clientToken, offset, limit)
             .body<SpotifyLibraryPlaylistsResponse>()
+    }
+
+    /**
+     * Fetch Spotify's own editorial/featured home feed.
+     */
+    suspend fun getHome(
+        authToken: String,
+        clientToken: String,
+        spT: String,
+        sectionItemsLimit: Int = 20,
+    ) = runCatching {
+        spotifyClient
+            .getSpotifyHome(authToken, clientToken, spT, sectionItemsLimit)
+            .body<SpotifyHomeResponse>()
     }
 
     /**

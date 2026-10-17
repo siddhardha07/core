@@ -172,6 +172,16 @@ interface DataStoreManager {
     suspend fun setSpdc(spdc: String)
 
     /**
+     * The `sp_t` cookie captured alongside `sp_dc` at Spotify login - a second cookie Spotify's
+     * own web player sends on its "home" GraphQL query (editorial/featured playlists). Not
+     * needed for anything else `sp_dc` already covers (search, canvas, lyrics, the user's own
+     * library), so it's its own field rather than folded into `spdc`.
+     */
+    val spT: Flow<String>
+
+    suspend fun setSpT(spT: String)
+
+    /**
      * Whether following an artist in the app also subscribes to their YouTube channel.
      *
      * Off by default and only settable while signed in: Follow has always been local-only, and

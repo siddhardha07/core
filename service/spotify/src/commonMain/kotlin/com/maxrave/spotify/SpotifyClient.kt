@@ -225,6 +225,68 @@ class SpotifyClient {
     // {"persistedQuery":{"version":1,"sha256Hash":"e4ed1f91a2cc5415befedb85acf8671dc1a4bf3ca1a5b945a6386101a22e28a6"}}
 
     /**
+     * Search Spotify's whole track catalog (not just the user's library) - same "searchTracks"
+     * persisted query [searchSpotifyTrack] already uses for Canvas lookups, just with a
+     * caller-chosen result count instead of that use case's fixed top-3.
+     */
+    suspend fun searchSpotifyTracks(
+        query: String,
+        authToken: String,
+        clientToken: String,
+        limit: Int = 20,
+    ) = spotifyClient.get("https://api-partner.spotify.com/pathfinder/v1/query?operationName=searchTracks") {
+        userAgent(USER_AGENT)
+        contentType(ContentType.Application.Json)
+        header("Authorization", "Bearer $authToken")
+        header("Client-Token", clientToken)
+        header(
+            HttpHeaders
+                .AcceptEncoding,
+            "gzip, deflate, br",
+        )
+        val variable =
+            "{\"searchTerm\":\"$query\",\"offset\":0,\"limit\":$limit,\"numberOfTopResults\":$limit," +
+                "\"includeAudiobooks\":true,\"includePreReleases\":false}"
+        val sha = "bc1ca2fcd0ba1013a0fc88e6cc4f190af501851e3dafd3e1ef85840297694428"
+        parameter("variables", variable)
+        parameter(
+            "extensions",
+            "{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"${sha}\"}}",
+        )
+    }
+
+    /**
+     * Search Spotify's whole playlist catalog (editorial + user-created, public playlists) -
+     * distinct from [getSpotifyUserPlaylists], which only lists the logged-in user's own saved
+     * ones and has no search parameter at all.
+     */
+    suspend fun searchSpotifyPlaylists(
+        query: String,
+        authToken: String,
+        clientToken: String,
+        limit: Int = 20,
+    ) = spotifyClient.get("https://api-partner.spotify.com/pathfinder/v1/query?operationName=searchPlaylists") {
+        userAgent(USER_AGENT)
+        contentType(ContentType.Application.Json)
+        header("Authorization", "Bearer $authToken")
+        header("Client-Token", clientToken)
+        header(
+            HttpHeaders
+                .AcceptEncoding,
+            "gzip, deflate, br",
+        )
+        val variable =
+            "{\"searchTerm\":\"$query\",\"offset\":0,\"limit\":$limit,\"numberOfTopResults\":$limit," +
+                "\"includePreReleases\":false,\"includeAudiobooks\":true,\"includeAuthors\":false}"
+        val sha = "fc3a690182167dbad20ac7a03f842b97be4e9737710600874cb903f30112ad58"
+        parameter("variables", variable)
+        parameter(
+            "extensions",
+            "{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"${sha}\"}}",
+        )
+    }
+
+    /**
      * Fetch the logged-in user's saved playlists ("Your Library" filtered to Playlists).
      * Persisted query hash / operation reverse-engineered from Spotify's web player
      * (same one used by third-party unofficial clients, e.g. spotube's Spotify plugin).
@@ -249,6 +311,38 @@ class SpotifyClient {
                 "\"limit\":$limit,\"offset\":$offset,\"flatten\":true,\"expandedFolders\":[]," +
                 "\"folderUri\":null,\"includeFoldersWhenFlattening\":true}"
         val sha = "973e511ca44261fda7eebac8b653155e7caee3675abb4fb110cc1b8c78b091c3"
+        parameter("variables", variable)
+        parameter(
+            "extensions",
+            "{\"persistedQuery\":{\"version\":1,\"sha256Hash\":\"${sha}\"}}",
+        )
+    }
+
+    /**
+     * Fetch Spotify's own home feed (editorial/featured playlists, "Made for you", etc).
+     * Needs the `sp_t` cookie in addition to the bearer/client tokens every other call here
+     * uses - that's the one piece of this call that's genuinely unverified: the reference
+     * implementation this was ported from has never decoded which section types carry
+     * podcasts/shows, only playlists, so this is scoped to playlist sections only.
+     */
+    suspend fun getSpotifyHome(
+        authToken: String,
+        clientToken: String,
+        spT: String,
+        sectionItemsLimit: Int = 20,
+    ) = spotifyClient.get("https://api-partner.spotify.com/pathfinder/v1/query?operationName=home") {
+        userAgent(USER_AGENT)
+        contentType(ContentType.Application.Json)
+        header("Authorization", "Bearer $authToken")
+        header("Client-Token", clientToken)
+        header(
+            HttpHeaders
+                .AcceptEncoding,
+            "gzip, deflate, br",
+        )
+        val variable =
+            "{\"timeZone\":\"UTC\",\"sp_t\":\"$spT\",\"facet\":\"\",\"sectionItemsLimit\":$sectionItemsLimit}"
+        val sha = "3357ffed7961629ba92b4e0a41514e4d5004a14355c964c23ce442205c9e44a1"
         parameter("variables", variable)
         parameter(
             "extensions",

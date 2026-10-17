@@ -2,6 +2,7 @@ package com.maxrave.domain.repository
 
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.spotify.SpotifyPlaylist
+import com.maxrave.domain.data.model.spotify.SpotifyPodcast
 import com.maxrave.domain.data.model.spotify.SpotifyTrack
 import com.maxrave.domain.utils.LocalResource
 import kotlinx.coroutines.flow.Flow
@@ -22,11 +23,31 @@ interface SpotifyLibraryRepository {
 
     fun getUserPlaylists(offset: Int = 0, limit: Int = 50): Flow<LocalResource<List<SpotifyPlaylist>>>
 
+    /**
+     * Spotify's own editorial/featured playlists (its "home" feed), not the user's own saved
+     * ones. Needs the `sp_t` cookie captured at login in addition to the usual tokens - on an
+     * account that logged in before this existed, `sp_t` will be empty and this returns an
+     * empty list rather than failing, until the user logs in again.
+     */
+    fun getFeaturedPlaylists(limit: Int = 20): Flow<LocalResource<List<SpotifyPlaylist>>>
+
+    /**
+     * Podcast shows surfaced on Spotify's own editorial "home" feed. Same `sp_t` requirement
+     * and empty-until-relogin fallback as [getFeaturedPlaylists].
+     */
+    fun getFeaturedPodcasts(limit: Int = 20): Flow<LocalResource<List<SpotifyPodcast>>>
+
     fun getPlaylistTracks(
         playlistId: String,
         offset: Int = 0,
         limit: Int = 100,
     ): Flow<LocalResource<List<SpotifyTrack>>>
+
+    /** Searches Spotify's whole track catalog - not the user's library. */
+    fun searchTracks(query: String, limit: Int = 20): Flow<LocalResource<List<SpotifyTrack>>>
+
+    /** Searches Spotify's whole playlist catalog - not the user's library. */
+    fun searchPlaylists(query: String, limit: Int = 20): Flow<LocalResource<List<SpotifyPlaylist>>>
 
     /**
      * Resolve a Spotify track to the best-matching YouTube Music [Track], by searching

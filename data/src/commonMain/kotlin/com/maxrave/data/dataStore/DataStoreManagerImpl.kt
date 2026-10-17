@@ -598,6 +598,19 @@ internal class DataStoreManagerImpl(
         Logger.i("Auth", if (spdc.isEmpty()) "Spotify: sp_dc cleared" else "Spotify: sp_dc saved")
     }
 
+    override val spT =
+        settingsDataStore.data.map { preferences ->
+            preferences[SP_T] ?: ""
+        }
+
+    override suspend fun setSpT(spT: String) {
+        withContext(Dispatchers.IO) {
+            settingsDataStore.edit { settings ->
+                settings[SP_T] = spT
+            }
+        }
+    }
+
     override val equalizerEnabled: Flow<String> =
         settingsDataStore.data.map { preferences ->
             preferences[EQUALIZER_ENABLED] ?: FALSE
@@ -1868,6 +1881,7 @@ internal class DataStoreManagerImpl(
         val VIDEO_QUALITY = stringPreferencesKey("video_quality")
         val PLAYER_VOLUME = floatPreferencesKey("player_volume")
         val SPDC = stringPreferencesKey("sp_dc")
+        val SP_T = stringPreferencesKey("sp_t")
         val SPOTIFY_LYRICS = stringPreferencesKey("spotify_lyrics")
         val SYNC_FOLLOW_TO_YOUTUBE = stringPreferencesKey("sync_follow_to_youtube")
         val EQUALIZER_AUTOEQ_PROFILE = stringPreferencesKey("equalizer_autoeq_profile")

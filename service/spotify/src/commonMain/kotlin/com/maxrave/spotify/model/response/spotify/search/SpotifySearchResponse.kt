@@ -1,5 +1,7 @@
 package com.maxrave.spotify.model.response.spotify.search
 
+import com.maxrave.spotify.model.response.spotify.playlist.SpotifyLibraryPlaylistsResponse
+import com.maxrave.spotify.model.response.spotify.playlist.SpotifyPlaylistTracksResponse
 import kotlinx.serialization.Serializable
 
 @Serializable
@@ -14,7 +16,19 @@ data class SpotifySearchResponse(
         data class Search(
             val query: String? = null,
             val tracksV2: TracksV2? = null,
+            val playlists: PlaylistsV2? = null,
         ) {
+            @Serializable
+            data class PlaylistsV2(
+                val items: List<PlaylistItem>? = null,
+                val totalCount: Int? = null,
+            )
+
+            @Serializable
+            data class PlaylistItem(
+                val data: SpotifyLibraryPlaylistsResponse.PlaylistData? = null,
+            )
+
             @Serializable
             data class TracksV2(
                 val items: List<Items>? = null,
@@ -41,10 +55,23 @@ data class SpotifySearchResponse(
                             val name: String? = null,
                             val artists: Artists? = null,
                             val duration: Duration? = null,
+                            val albumOfTrack: AlbumOfTrack? = null,
+                            val contentRating: ContentRating? = null,
                         ) {
                             @Serializable
                             data class Duration(
                                 val totalMilliseconds: Int? = null,
+                            )
+
+                            @Serializable
+                            data class AlbumOfTrack(
+                                val name: String? = null,
+                                val coverArt: SpotifyPlaylistTracksResponse.CoverArt? = null,
+                            )
+
+                            @Serializable
+                            data class ContentRating(
+                                val label: String? = null,
                             )
 
                             @Serializable

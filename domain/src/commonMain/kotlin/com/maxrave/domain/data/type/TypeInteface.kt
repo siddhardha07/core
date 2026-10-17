@@ -59,6 +59,8 @@ interface SearchResultType {
         ALBUM,
         ARTIST,
         PODCAST,
+        SPOTIFY_PLAYLIST,
+        SPOTIFY_SONG,
     }
 
     fun objectType(): Type

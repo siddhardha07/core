@@ -6,6 +6,8 @@ import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.logger.Logger
 import com.maxrave.spotify.Spotify
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlin.time.Clock
 import kotlin.time.ExperimentalTime
 
@@ -31,7 +33,17 @@ data class SpotifyTokens(
 class SpotifyTokenProvider(
     private val spotify: Spotify,
 ) {
-    suspend fun getValidTokens(dataStoreManager: DataStoreManager): SpotifyTokens? {
+    // Callers that both see an expired/missing token at once (e.g. Home fetching the user's
+    // own playlists and featured playlists in parallel) used to each fire their own TOTP-based
+    // refresh - Spotify's token endpoint doesn't tolerate two of those landing at once from the
+    // same session and silently failed the loser. Serializing refreshes here means the second
+    // caller just waits for and reuses the first one's result instead of racing it.
+    private val refreshMutex = Mutex()
+
+    suspend fun getValidTokens(dataStoreManager: DataStoreManager): SpotifyTokens? =
+        refreshMutex.withLock { getValidTokensLocked(dataStoreManager) }
+
+    private suspend fun getValidTokensLocked(dataStoreManager: DataStoreManager): SpotifyTokens? {
         val now = Clock.System.now().toEpochMilliseconds()
         val cachedPersonalToken = dataStoreManager.spotifyPersonalToken.first()
         val cachedClientToken = dataStoreManager.spotifyClientToken.first()

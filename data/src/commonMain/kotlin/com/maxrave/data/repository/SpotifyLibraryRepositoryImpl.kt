@@ -1,10 +1,15 @@
 package com.maxrave.data.repository
 
+import com.maxrave.data.mapping.toFeaturedPlaylists
+import com.maxrave.data.mapping.toFeaturedPodcasts
+import com.maxrave.data.mapping.toSpotifyPlaylistResults
 import com.maxrave.data.mapping.toSpotifyPlaylists
+import com.maxrave.data.mapping.toSpotifyTrackResults
 import com.maxrave.data.mapping.toSpotifyTracks
 import com.maxrave.data.spotify.SpotifyTokenProvider
 import com.maxrave.domain.data.model.browse.album.Track
 import com.maxrave.domain.data.model.spotify.SpotifyPlaylist
+import com.maxrave.domain.data.model.spotify.SpotifyPodcast
 import com.maxrave.domain.data.model.spotify.SpotifyTrack
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.repository.SearchRepository
@@ -46,6 +51,35 @@ internal class SpotifyLibraryRepositoryImpl(
                 .map { it.toSpotifyPlaylists() }
         }
 
+    override fun getFeaturedPlaylists(limit: Int): Flow<LocalResource<List<SpotifyPlaylist>>> =
+        wrapResultResource {
+            val spT = dataStoreManager.spT.first()
+            if (spT.isEmpty()) {
+                // Logged in before sp_t capture existed - nothing to show until they log in again.
+                return@wrapResultResource Result.success(emptyList())
+            }
+            val tokens =
+                spotifyTokenProvider.getValidTokens(dataStoreManager)
+                    ?: return@wrapResultResource Result.failure(Exception("Not logged in to Spotify"))
+            spotify
+                .getHome(tokens.personalToken, tokens.clientToken, spT, limit)
+                .map { it.toFeaturedPlaylists() }
+        }
+
+    override fun getFeaturedPodcasts(limit: Int): Flow<LocalResource<List<SpotifyPodcast>>> =
+        wrapResultResource {
+            val spT = dataStoreManager.spT.first()
+            if (spT.isEmpty()) {
+                return@wrapResultResource Result.success(emptyList())
+            }
+            val tokens =
+                spotifyTokenProvider.getValidTokens(dataStoreManager)
+                    ?: return@wrapResultResource Result.failure(Exception("Not logged in to Spotify"))
+            spotify
+                .getHome(tokens.personalToken, tokens.clientToken, spT, limit)
+                .map { it.toFeaturedPodcasts() }
+        }
+
     override fun getPlaylistTracks(
         playlistId: String,
         offset: Int,
@@ -58,6 +92,32 @@ internal class SpotifyLibraryRepositoryImpl(
             spotify
                 .getPlaylistTracks(playlistId, tokens.personalToken, tokens.clientToken, offset, limit)
                 .map { it.toSpotifyTracks() }
+        }
+
+    override fun searchTracks(
+        query: String,
+        limit: Int,
+    ): Flow<LocalResource<List<SpotifyTrack>>> =
+        wrapResultResource {
+            val tokens =
+                spotifyTokenProvider.getValidTokens(dataStoreManager)
+                    ?: return@wrapResultResource Result.failure(Exception("Not logged in to Spotify"))
+            spotify
+                .searchTracks(query, tokens.personalToken, tokens.clientToken, limit)
+                .map { it.toSpotifyTrackResults() }
+        }
+
+    override fun searchPlaylists(
+        query: String,
+        limit: Int,
+    ): Flow<LocalResource<List<SpotifyPlaylist>>> =
+        wrapResultResource {
+            val tokens =
+                spotifyTokenProvider.getValidTokens(dataStoreManager)
+                    ?: return@wrapResultResource Result.failure(Exception("Not logged in to Spotify"))
+            spotify
+                .searchPlaylists(query, tokens.personalToken, tokens.clientToken, limit)
+                .map { it.toSpotifyPlaylistResults() }
         }
 
     override suspend fun resolveTrack(track: SpotifyTrack): Track? {
