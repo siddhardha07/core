@@ -20,6 +20,17 @@ object Config {
             "com.spotify.music",
         )
 
+    /**
+     * SHA-256 hex of this fork's own release-signing certificate (see `OfficialBuild.kt`'s
+     * `signingCertSha256()` for how an installed APK's own value is read). A release build
+     * signed with any other key is someone else's repackage of this fork, not upstream's -
+     * so this is pinned to this fork's own `simpmusic.jks`, not upstream's F-Droid key.
+     */
+    val OFFICIAL_SIGNING_CERT_SHA256 =
+        setOf(
+            "34b88ea13cf1be5316942407115965428fc88ecd1ff7b12b5505e2047a77eab7",
+        )
+
     const val SPOTIFY_LOG_IN_URL: String = "https://accounts.spotify.com/en/login"
     const val SPOTIFY_ACCOUNT_URL = "https://accounts.spotify.com/en/status"
     const val YOUTUBE_MUSIC_MAIN_URL = "https://music.youtube.com/"
