@@ -1,8 +1,13 @@
 package com.maxrave.data.db.datasource
 
 import DatabaseDao
+import com.maxrave.data.db.MusicDatabase
 import com.maxrave.domain.data.entities.AlbumEntity
 import com.maxrave.domain.data.entities.ArtistEntity
+import com.maxrave.domain.data.entities.ArtistMotionEntity
+import com.maxrave.domain.data.entities.AutoEqCurveEntity
+import com.maxrave.domain.data.entities.AutoEqEntryEntity
+import com.maxrave.domain.data.entities.AutoEqIndexMetaEntity
 import com.maxrave.domain.data.entities.EpisodeEntity
 import com.maxrave.domain.data.entities.FollowedArtistSingleAndAlbum
 import com.maxrave.domain.data.entities.GoogleAccountEntity
@@ -20,9 +25,14 @@ import com.maxrave.domain.data.entities.SongEntity
 import com.maxrave.domain.data.entities.SongInfoEntity
 import com.maxrave.domain.data.entities.TranslatedLyricsEntity
 import com.maxrave.domain.data.entities.YourYouTubePlaylistList
+import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.utils.FilterState
+import com.maxrave.domain.utils.isLive
 import kotlinx.datetime.LocalDateTime
+
+/** SQLite caps bind parameters per statement; stay well under it when deleting in bulk. */
+private const val DELETE_BATCH_SIZE = 400
 
 /**
  * The album name older builds stored when they could not find a real one.
@@ -36,8 +46,12 @@ private const val PLACEHOLDER_ALBUM_NAME = "Album"
 
 internal class LocalDataSource(
     private val databaseDao: DatabaseDao,
+    private val musicDatabase: MusicDatabase,
 ) {
     suspend fun checkpoint() = databaseDao.checkpoint()
+
+    /** Goes through the database rather than the DAO — see [MusicDatabase.vacuum]. */
+    suspend fun vacuum() = musicDatabase.vacuum()
 
     suspend fun getAllRecentData() = databaseDao.getAllRecentData()
 
@@ -52,11 +66,6 @@ internal class LocalDataSource(
     suspend fun insertSearchHistory(searchHistory: SearchHistory) = databaseDao.insertSearchHistory(searchHistory)
 
     suspend fun getAllSongs(limit: Int) = databaseDao.getAllSongs(limit)
-
-    suspend fun getRecentSongs(
-        limit: Int,
-        offset: Int,
-    ) = databaseDao.getRecentSongs(limit, offset)
 
     suspend fun getSongByListVideoId(
         primaryKeyList: List<String>,
@@ -85,6 +94,60 @@ internal class LocalDataSource(
         offset,
     )
 
+    // ===== Clear listening history + drop orphaned songs =====
+
+    suspend fun deleteAllPlaybackEvents() = databaseDao.deleteAllPlaybackEvents()
+
+    suspend fun deleteUnfollowedArtists() = databaseDao.deleteUnfollowedArtists()
+
+    suspend fun deleteOrphanedArtistMotion() = databaseDao.deleteOrphanedArtistMotion()
+
+    suspend fun deleteNotificationsOfUnfollowedArtists() = databaseDao.deleteNotificationsOfUnfollowedArtists()
+
+    suspend fun deleteFollowedArtistReleasesOfUnfollowedArtists() = databaseDao.deleteFollowedArtistReleasesOfUnfollowedArtists()
+
+    suspend fun deleteUnfavoritedPodcasts() = databaseDao.deleteUnfavoritedPodcasts()
+
+    suspend fun deleteUnreferencedAlbums() = databaseDao.deleteUnreferencedAlbums()
+
+    suspend fun deleteUnreferencedPlaylists() = databaseDao.deleteUnreferencedPlaylists()
+
+    suspend fun getOrphanedSongIds() = databaseDao.getOrphanedSongIds()
+
+    /**
+     * Drop the songs and everything that only existed to describe them.
+     *
+     * Batched because SQLite limits how many bind parameters a single statement may carry, and this
+     * can run over a library with thousands of stale rows.
+     *
+     * @return how many songs were actually deleted, which can be fewer than were asked for — the
+     * delete re-checks the orphan conditions, so anything the user touched in the meantime survives.
+     */
+    suspend fun deleteSongsAndRelatedData(videoIds: List<String>): Int =
+        videoIds.chunked(DELETE_BATCH_SIZE).sumOf { batch ->
+            // Songs first, so the follow-up deletes can tell which ids really went.
+            val deleted = databaseDao.deleteSongsByIds(batch)
+            databaseDao.deleteLyricsByIds(batch)
+            databaseDao.deleteTranslatedLyricsByIds(batch)
+            databaseDao.deleteNewFormatsByIds(batch)
+            databaseDao.deleteSongInfoByIds(batch)
+            deleted
+        }
+
+    /**
+     * The same four tables again, but for rows whose song is already gone.
+     *
+     * [deleteSongsAndRelatedData] can only reach the ids it was handed, so these have been piling up
+     * since long before this sweep existed. Unbatched on purpose — the statements bind nothing.
+     *
+     * @return how many rows went, across all four tables.
+     */
+    suspend fun deleteStaleSongSatellites(): Int =
+        databaseDao.deleteStaleNewFormats() +
+            databaseDao.deleteStaleLyrics() +
+            databaseDao.deleteStaleTranslatedLyrics() +
+            databaseDao.deleteStaleSongInfo()
+
     suspend fun getLikedSongs(
         limit: Int,
         offset: Int,
@@ -93,7 +156,25 @@ internal class LocalDataSource(
         offset,
     )
 
+    fun getLikedSongsByArtist(channelId: String) = databaseDao.getLikedSongsByArtist(channelId)
+
     suspend fun getSong(videoId: String) = databaseDao.getSong(videoId)
+
+    suspend fun getSongPlaysSince(from: LocalDateTime) = databaseDao.getSongPlaysSince(from)
+
+    suspend fun getSongsByCategory(category: String) = databaseDao.getSongsByCategory(category)
+
+    suspend fun updateSongCategory(
+        videoId: String,
+        category: String?,
+    ) = databaseDao.updateSongCategory(category, videoId)
+
+    suspend fun clearCategoryFromNotDownloaded(category: String) = databaseDao.clearCategoryFromNotDownloaded(category)
+
+    suspend fun clearCategoryFromClaimed(
+        category: String,
+        includeLiked: Boolean,
+    ) = databaseDao.clearCategoryFromClaimed(category, includeLiked)
 
     fun getSongAsFlow(videoId: String) = databaseDao.getSongAsFlow(videoId)
 
@@ -135,8 +216,21 @@ internal class LocalDataSource(
                 )
             }
         }
+        // A row stored before its LIVE chip was seen learns it here, and so does one inserted just
+        // after its stream resolved — resolution (a precache, say) cannot mark a row that does not
+        // exist yet. Only raised, never cleared: a source that shows no chip has not said the
+        // broadcast ended.
+        if ((rowId == -1L && song.isLive) || (!song.isLive && LiveStreamRegistry.isLive(song.videoId))) {
+            databaseDao.markSongLive(song.videoId)
+        }
         return rowId
     }
+
+    /** Written from stream resolution, the one source that can also say a broadcast has ended. */
+    suspend fun updateSongLiveStatus(
+        videoId: String,
+        isLive: Boolean,
+    ) = if (isLive) databaseDao.markSongLive(videoId) else databaseDao.unmarkSongLive(videoId)
 
     /**
      * Batch counterpart of [insertSong], used by the importer.
@@ -150,6 +244,11 @@ internal class LocalDataSource(
         thumbnail: String,
         videoId: String,
     ) = databaseDao.updateThumbnailsSongEntity(thumbnail, videoId)
+
+    suspend fun updateVideoTypeSongEntity(
+        videoType: String,
+        videoId: String,
+    ) = databaseDao.updateVideoTypeSongEntity(videoType, videoId)
 
     suspend fun updateListenCount(videoId: String) = databaseDao.updateTotalPlayTime(videoId)
 
@@ -182,6 +281,18 @@ internal class LocalDataSource(
 
     fun getMostPlayedSongs() = databaseDao.getMostPlayedSongs()
 
+    fun countLikedSongs() = databaseDao.countLikedSongs()
+
+    fun getLikedSongThumbnails(limit: Int) = databaseDao.getLikedSongThumbnails(limit)
+
+    fun countDownloadedSongs() = databaseDao.countDownloadedSongs()
+
+    fun getDownloadedSongThumbnails(limit: Int) = databaseDao.getDownloadedSongThumbnails(limit)
+
+    fun countFollowedArtists() = databaseDao.countFollowedArtists()
+
+    fun getFollowedArtistThumbnails(limit: Int) = databaseDao.getFollowedArtistThumbnails(limit)
+
     suspend fun updateDownloadState(
         downloadState: Int,
         videoId: String,
@@ -201,6 +312,10 @@ internal class LocalDataSource(
         nameLogoUrl: String?,
         nameLogoColor: String?,
     ) = databaseDao.updateArtistNameLogo(channelId, nameLogoUrl, nameLogoColor)
+
+    suspend fun getArtistMotion(channelId: String) = databaseDao.getArtistMotion(channelId)
+
+    suspend fun upsertArtistMotion(motion: ArtistMotionEntity) = databaseDao.upsertArtistMotion(motion)
 
     suspend fun updateFollowed(
         followed: Int,
@@ -394,7 +509,15 @@ internal class LocalDataSource(
 
     suspend fun insertSetVideoId(setVideoIdEntity: SetVideoIdEntity) = databaseDao.insertSetVideoId(setVideoIdEntity)
 
-    suspend fun getSetVideoId(videoId: String) = databaseDao.getSetVideoId(videoId)
+    suspend fun getSetVideoId(
+        videoId: String,
+        youtubePlaylistIds: List<String>,
+    ) = databaseDao.getSetVideoId(videoId, youtubePlaylistIds)
+
+    suspend fun deleteSetVideoId(
+        videoId: String,
+        youtubePlaylistId: String,
+    ) = databaseDao.deleteSetVideoId(videoId, youtubePlaylistId)
 
     suspend fun insertPairSongLocalPlaylist(pairSongLocalPlaylist: PairSongLocalPlaylist) =
         databaseDao.insertPairSongLocalPlaylist(pairSongLocalPlaylist)
@@ -420,6 +543,23 @@ internal class LocalDataSource(
         playlistId: Long,
         listPosition: List<Int>,
     ) = databaseDao.getPlaylistPairSongByListPosition(playlistId, listPosition)
+
+    /**
+     * Search one local playlist by title or artist.
+     *
+     * Escaping happens here rather than in the DAO because the term is a bind parameter, not a
+     * column: Room passes the value through untouched, and LIKE still reads `%` and `_` inside it
+     * as wildcards. A user typing `%` would otherwise get the whole playlist back.
+     */
+    suspend fun searchPlaylistPairSong(
+        playlistId: Long,
+        query: String,
+        limit: Int,
+    ) = databaseDao.searchPlaylistPairSong(
+        playlistId = playlistId,
+        query = "%" + query.escapeForLike() + "%",
+        limit = limit,
+    )
 
     suspend fun getPlaylistPairSongByOffset(
         playlistId: Long,
@@ -458,6 +598,12 @@ internal class LocalDataSource(
     }
 
     suspend fun getNewestPlaylistPairSong(playlistId: Long) = databaseDao.getNewestPlaylistPairSong(playlistId)
+
+    suspend fun moveSongInPlaylist(
+        playlistId: Long,
+        fromIndex: Int,
+        toIndex: Int,
+    ) = databaseDao.moveSongInPlaylist(playlistId, fromIndex, toIndex)
 
     suspend fun editPositionOfSongInPlaylist(
         playlistId: Long,
@@ -529,6 +675,8 @@ internal class LocalDataSource(
     suspend fun countNotificationByLink(link: String) = databaseDao.countNotificationByLink(link)
 
     suspend fun deleteNotification(id: Long) = databaseDao.deleteNotification(id)
+
+    suspend fun deleteNotificationsByChannelId(channelId: String) = databaseDao.deleteNotificationsByChannelId(channelId)
 
     suspend fun getTranslatedLyrics(
         videoId: String,
@@ -614,4 +762,45 @@ internal class LocalDataSource(
     suspend fun deleteAllYourYouTubePlaylist() =
         databaseDao.deleteAllYourYouTubePlaylist()
 
+
+    // ========== AutoEq ==========
+
+    suspend fun getAutoEqEntryCount(): Int = databaseDao.getAutoEqEntryCount()
+
+    suspend fun searchAutoEqEntries(
+        query: String,
+        limit: Int,
+    ): List<AutoEqEntryEntity> =
+        if (query.isBlank()) {
+            databaseDao.getAutoEqEntries(limit)
+        } else {
+            databaseDao.searchAutoEqEntries(query.escapeForLike(), limit)
+        }
+
+    suspend fun getAutoEqCurve(path: String): AutoEqCurveEntity? = databaseDao.getAutoEqCurve(path)
+
+    suspend fun insertAutoEqCurve(curve: AutoEqCurveEntity) = databaseDao.insertAutoEqCurve(curve)
+
+    suspend fun getAutoEqCachedCurvePaths(): List<String> = databaseDao.getAutoEqCachedCurvePaths()
+
+    suspend fun getAutoEqIndexMeta(): AutoEqIndexMetaEntity? = databaseDao.getAutoEqIndexMeta()
+
+    /** Records that the cache was checked, without touching the rows it describes. */
+    suspend fun updateAutoEqIndexMeta(meta: AutoEqIndexMetaEntity) = databaseDao.upsertAutoEqIndexMeta(meta)
+
+    suspend fun replaceAutoEqIndex(
+        entries: List<AutoEqEntryEntity>,
+        meta: AutoEqIndexMetaEntity,
+    ) = databaseDao.replaceAutoEqIndex(entries, meta)
 }
+
+/**
+ * Escapes the LIKE wildcards in a user-typed term, for use with `ESCAPE '\\'`.
+ *
+ * The backslash goes first: escaping it after `_` and `%` would escape the backslashes this very
+ * function just added, turning `\_` back into a literal backslash followed by a wildcard.
+ */
+private fun String.escapeForLike(): String =
+    replace("\\", "\\\\")
+        .replace("_", "\\_")
+        .replace("%", "\\%")

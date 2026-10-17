@@ -20,11 +20,14 @@ import coil3.request.CachePolicy
 import coil3.request.ImageRequest
 import com.maxrave.common.MERGING_DATA_TYPE
 import com.maxrave.domain.data.entities.DownloadState
+import com.maxrave.domain.data.entities.SongEntity
+import com.maxrave.domain.data.player.LiveStreamRegistry
 import com.maxrave.domain.extension.now
 import com.maxrave.domain.manager.DataStoreManager
 import com.maxrave.domain.mediaservice.handler.DownloadHandler
 import com.maxrave.domain.repository.SongRepository
 import com.maxrave.domain.repository.StreamRepository
+import com.maxrave.domain.utils.isLive
 import com.maxrave.logger.Logger
 import com.maxrave.media3.extension.isFullyCached
 import kotlinx.coroutines.CoroutineScope
@@ -33,6 +36,7 @@ import kotlinx.coroutines.Runnable
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.firstOrNull
 import kotlinx.coroutines.flow.lastOrNull
 import kotlinx.coroutines.flow.update
@@ -68,15 +72,15 @@ internal class DownloadUtils(
                 ),
         ) { dataSpec ->
             val mediaId = dataSpec.key ?: error("No media id")
-            Logger.w("Stream", mediaId)
-            Logger.w("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
+            Logger.d("Stream", mediaId)
+            Logger.d("Stream", mediaId.startsWith(MERGING_DATA_TYPE.VIDEO).toString())
             // Already downloaded in full: hand the DataSpec back untouched so the enclosing
             // CacheDataSource reads straight off disk. Safe precisely because the whole track
             // is there — it never needs the upstream, which is the only thing the bare media id
             // in the URI cannot survive. Re-resolving here would re-fetch a track the user
             // already has.
             if (downloadCache.isFullyCached(mediaId, dataSpec.position)) {
-                Logger.w("Stream", "Already downloaded $mediaId")
+                Logger.d("Stream", "Already downloaded $mediaId")
                 return@Factory dataSpec
             }
             // Anything short of a full copy must resolve a real URL, and must never hand back
@@ -99,7 +103,7 @@ internal class DownloadUtils(
                         val videoUrl = it.videoUrl
                         if (videoUrl != null && it.expiredTime > now()) {
                             Logger.d("Stream", videoUrl)
-                            Logger.w("Stream", "Video from format")
+                            Logger.d("Stream", "Video from format")
                             val is403Url = streamRepository.is403Url(videoUrl).firstOrNull() != false
                             if (!is403Url) {
                                 dataSpecReturn = dataSpec.withUri(videoUrl.toUri())
@@ -124,7 +128,7 @@ internal class DownloadUtils(
                         val audioUrl = it.audioUrl
                         if (audioUrl != null && it.expiredTime > now()) {
                             Logger.d("Stream", audioUrl)
-                            Logger.w("Stream", "Audio from format")
+                            Logger.d("Stream", "Audio from format")
                             val is403Url = streamRepository.is403Url(audioUrl).firstOrNull() != false
                             if (!is403Url) {
                                 dataSpecReturn = dataSpec.withUri(audioUrl.toUri())
@@ -153,8 +157,16 @@ internal class DownloadUtils(
                 }
             }
             if (!resolved) {
-                Logger.e("Stream", "Failed to resolve download stream URL for $mediaId")
-                throw java.io.IOException("Failed to resolve stream URL for $mediaId")
+                // getStream hands a live broadcast no URL here (StreamRepositoryImpl), so say
+                // which case this is rather than a bare "failed to resolve".
+                val reason =
+                    if (LiveStreamRegistry.isLive(mediaId.removePrefix(MERGING_DATA_TYPE.VIDEO))) {
+                        "it is a live stream"
+                    } else {
+                        "failed to resolve stream URL"
+                    }
+                Logger.e("Stream", "Cannot download $mediaId: $reason")
+                throw java.io.IOException("Cannot download $mediaId: $reason")
             }
             return@Factory dataSpecReturn
         }
@@ -178,6 +190,10 @@ internal class DownloadUtils(
                     context = context,
                     notificationHelper = downloadNotificationHelper,
                     nextNotificationId = MusicDownloadService.NOTIFICATION_ID + 1,
+                    scope = coroutineScope,
+                    isSmartDownload = { videoId ->
+                        songRepository.getSongById(videoId).lastOrNull()?.category == SongEntity.SMART_DOWNLOAD
+                    },
                 ),
             )
         }
@@ -191,23 +207,33 @@ internal class DownloadUtils(
     val downloadingVideoIds = MutableStateFlow<MutableSet<String>>(mutableSetOf())
 
     /**
-     * Use thumbnail to check video or audio
+     * Use thumbnail to check video or audio. The video stream is fetched only while
+     * "play video instead of audio" is on: playback merges it in for nothing else.
      */
     override suspend fun downloadTrack(
         videoId: String,
         title: String,
         thumbnail: String,
     ) {
+        // Every download path ends here, so this is where a broadcast already known to be live
+        // is turned away. One not known yet is refused when its stream resolves.
+        if (songRepository.getSongById(videoId).lastOrNull()?.isLive == true) {
+            Logger.i("Download", "$videoId is a live stream, not downloading")
+            songRepository.updateDownloadState(videoId, DownloadState.STATE_NOT_DOWNLOADED)
+            return
+        }
         var isVideo = false
-        val request =
-            ImageRequest
-                .Builder(context)
-                .data(thumbnail)
-                .diskCachePolicy(CachePolicy.ENABLED)
-                .build()
-        val imageResult = ImageLoader(context).execute(request)
-        if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
-            isVideo = true
+        if (dataStoreManager.watchVideoInsteadOfPlayingAudio.first() == DataStoreManager.Values.TRUE) {
+            val request =
+                ImageRequest
+                    .Builder(context)
+                    .data(thumbnail)
+                    .diskCachePolicy(CachePolicy.ENABLED)
+                    .build()
+            val imageResult = ImageLoader(context).execute(request)
+            if (imageResult.image?.height != imageResult.image?.width && imageResult.image != null) {
+                isVideo = true
+            }
         }
         val downloadRequest =
             DownloadRequest

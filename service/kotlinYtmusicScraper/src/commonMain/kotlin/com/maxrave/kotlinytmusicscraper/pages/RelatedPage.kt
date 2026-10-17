@@ -69,6 +69,8 @@ data class RelatedPage(
                     renderer.badges?.find {
                         it.musicInlineBadgeRenderer?.icon?.iconType == "MUSIC_EXPLICIT_BADGE"
                     } != null,
+                musicVideoType = renderer.musicVideoType,
+                isLive = renderer.isLive,
             )
         }
 
@@ -104,6 +106,8 @@ data class RelatedPage(
                         duration = null,
                         thumbnail = renderer.thumbnailRenderer?.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
                         endpoint = renderer.navigationEndpoint.watchEndpoint,
+                        musicVideoType = renderer.musicVideoType,
+                        isLive = renderer.isLive,
                     )
 
                 renderer.isVideo ->
@@ -125,6 +129,8 @@ data class RelatedPage(
                         duration = null,
                         thumbnail = renderer.thumbnailRenderer?.musicThumbnailRenderer?.getThumbnailUrl() ?: return null,
                         endpoint = renderer.navigationEndpoint.watchEndpoint,
+                        musicVideoType = renderer.musicVideoType,
+                        isLive = renderer.isLive,
                     )
 
                 renderer.isAlbum ->

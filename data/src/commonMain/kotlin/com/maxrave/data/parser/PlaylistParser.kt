@@ -10,6 +10,7 @@ import com.maxrave.domain.data.model.searchResult.songs.Album
 import com.maxrave.domain.data.model.searchResult.songs.Artist
 import com.maxrave.domain.data.model.searchResult.songs.Thumbnail
 import com.maxrave.domain.extension.now
+import com.maxrave.domain.utils.LIVE_RESULT_TYPE
 import com.maxrave.kotlinytmusicscraper.models.MusicShelfRenderer
 import com.maxrave.kotlinytmusicscraper.models.SectionListRenderer
 import com.maxrave.kotlinytmusicscraper.models.response.BrowseResponse
@@ -324,10 +325,12 @@ internal fun parsePlaylistData(
                     // The model already resolves this from playlistItemData, then the overlay play
                     // button, then the title column — YouTube does not always populate all three.
                     videoId = renderer?.videoId ?: "",
-                    videoType = "video",
+                    // Resolved from the same three endpoints as videoId above; null when this row
+                    // carried no music config at all.
+                    videoType = renderer?.musicVideoType,
                     category = null,
                     feedbackTokens = null,
-                    resultType = null,
+                    resultType = if (renderer?.isLive == true) LIVE_RESULT_TYPE else null,
                     year = null,
                 )
             if (track.videoId != "") {

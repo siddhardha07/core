@@ -1,6 +1,7 @@
 package com.maxrave.domain.manager
 
 import com.maxrave.domain.data.model.network.ProxyConfiguration
+import com.maxrave.domain.data.player.ReverbPreset
 import kotlinx.coroutines.flow.Flow
 
 interface DataStoreManager {
@@ -52,6 +53,14 @@ interface DataStoreManager {
 
     suspend fun setMoodArtworkCache(json: String)
 
+    /**
+     * The AI's reading of the listener's taste behind the Library card, as serialized JSON. Null
+     * until the first reading, and set back to null when the listening history is cleared.
+     */
+    val tasteProfile: Flow<String?>
+
+    suspend fun setTasteProfile(json: String?)
+
     fun getString(key: String): Flow<String?>
 
     suspend fun putString(
@@ -62,10 +71,12 @@ interface DataStoreManager {
     val loggedIn: Flow<String>
     val cookie: Flow<String>
     val pageId: Flow<String>
+    val authUser: Flow<Int>
 
     suspend fun setCookie(
         cookie: String,
         pageId: String?,
+        authUser: Int = 0,
     )
 
     suspend fun setLoggedIn(logged: Boolean)
@@ -138,6 +149,16 @@ interface DataStoreManager {
 
     suspend fun setWatchVideoInsteadOfPlayingAudio(watch: Boolean)
 
+    /**
+     * Whether a radio queue should carry audio only, dropping the video entries YouTube mixes in.
+     *
+     * Scoped to radios on purpose — it is not a global "hide every video" switch, so a playlist or
+     * an album the user picked themselves still plays exactly what it contains.
+     */
+    val radioAudioOnly: Flow<String>
+
+    suspend fun setRadioAudioOnly(audioOnly: Boolean)
+
     val playerVolume: Flow<Float>
 
     suspend fun setPlayerVolume(volume: Float)
@@ -150,6 +171,121 @@ interface DataStoreManager {
 
     suspend fun setSpdc(spdc: String)
 
+    /**
+     * Whether following an artist in the app also subscribes to their YouTube channel.
+     *
+     * Off by default and only settable while signed in: Follow has always been local-only, and
+     * writing to someone's account is not something to start doing without being asked.
+     */
+    /**
+     * Ten equalizer band gains in dB, comma separated, or empty for flat.
+     *
+     * Stored as text rather than ten keys because the bands are only ever read and written
+     * together — a curve is one setting, not ten.
+     */
+    /**
+     * Whether the equalizer is applied at all.
+     *
+     * Separate from the curve so switching it off keeps the shape the user built — turning it back
+     * on returns to their settings rather than to flat.
+     */
+    val equalizerEnabled: Flow<String>
+
+    suspend fun setEqualizerEnabled(enabled: Boolean)
+
+    val equalizerBands: Flow<String>
+
+    suspend fun setEqualizerBands(bandsDb: List<Float>)
+
+    /** Equalizer preamp in dB. Usually negative: it is what stops a boosted curve from clipping. */
+    val equalizerPreamp: Flow<Float>
+
+    suspend fun setEqualizerPreamp(preampDb: Float)
+
+    /**
+     * One of [EQUALIZER_TYPE_BUILT_IN], [EQUALIZER_TYPE_SYSTEM]. Android only — Desktop has no system
+     * equalizer and always runs the built-in one. The two never run together.
+     */
+    val equalizerType: Flow<String>
+
+    suspend fun setEqualizerType(type: String)
+
+    /**
+     * The AutoEq profile last imported, as `"<label>\n<comma-separated gains>"`.
+     *
+     * Label and curve share one key on purpose. The label is only shown while the equalizer still
+     * holds exactly those gains, so storing them apart would create two values that have to agree
+     * — and a moment during the write where they do not.
+     */
+    val equalizerAutoEqProfile: Flow<String>
+
+    suspend fun setEqualizerAutoEqProfile(
+        label: String,
+        bandsDb: List<Float>,
+    )
+
+    /**
+     * Whether the echo is applied at all.
+     *
+     * Separate from the three values below for the same reason the equalizer switch is separate
+     * from its curve: switching it off has to take the filter out of the audio chain, but the
+     * numbers the user dialled in stay put, so switching it back on returns to their echo rather
+     * than to the default one.
+     */
+    val delayEnabled: Flow<String>
+
+    suspend fun setDelayEnabled(enabled: Boolean)
+
+    /** Spacing between echo repeats in milliseconds — where the taps land, not how many there are. */
+    val delayTimeMs: Flow<Int>
+
+    suspend fun setDelayTimeMs(timeMs: Int)
+
+    /**
+     * How much of each repeat survives into the next one, 0..0.9.
+     *
+     * The number of audible taps is derived from this rather than stored beside it: a tail length
+     * and a tap count are two ways of saying the same thing, and storing both creates a pair that
+     * can disagree.
+     */
+    val delayFeedback: Flow<Float>
+
+    suspend fun setDelayFeedback(feedback: Float)
+
+    /** Echo level against the dry signal, 0..1. */
+    val delayMix: Flow<Float>
+
+    suspend fun setDelayMix(mix: Float)
+
+    /**
+     * Whether the reverb is applied at all. Separate from the room and the mix on the same
+     * reasoning as [delayEnabled] — the room the user picked outlives the switch.
+     */
+    val reverbEnabled: Flow<String>
+
+    suspend fun setReverbEnabled(enabled: Boolean)
+
+    /**
+     * The room being convolved against, as the raw [ReverbPreset] name.
+     *
+     * Stored as the name and handed back unresolved because a name survives the list growing —
+     * an index is a position, and inserting a room in the middle of the list would silently move
+     * every device onto a different one. Readers resolve it themselves and fall back to the
+     * default when the stored name comes from a newer build than the one reading it.
+     */
+    val reverbPreset: Flow<String>
+
+    suspend fun setReverbPreset(preset: ReverbPreset)
+
+    /** Wet level of the reverb against the dry signal, 0..1. */
+    val reverbMix: Flow<Float>
+
+    suspend fun setReverbMix(mix: Float)
+
+    val syncFollowToYouTube: Flow<String>
+
+    suspend fun setSyncFollowToYouTube(enabled: Boolean)
+
     val spotifyLyrics: Flow<String>
 
     suspend fun setSpotifyLyrics(spotifyLyrics: Boolean)
@@ -157,6 +293,14 @@ interface DataStoreManager {
     val spotifyCanvas: Flow<String>
 
     suspend fun setSpotifyCanvas(spotifyCanvas: Boolean)
+
+    /**
+     * Animated album artwork from the hidden AM catalog, used in place of a Spotify canvas. It
+     * needs no account of any kind, so unlike [spotifyCanvas] it is never gated on a login.
+     */
+    val amAnimatedArtwork: Flow<String>
+
+    suspend fun setAMAnimatedArtwork(enabled: Boolean)
 
     val spotifyClientToken: Flow<String>
 
@@ -189,10 +333,6 @@ interface DataStoreManager {
     val chartKey: Flow<String>
 
     suspend fun setChartKey(key: String)
-
-    val translucentBottomBar: Flow<String>
-
-    suspend fun setTranslucentBottomBar(translucent: Boolean)
 
     val usingProxy: Flow<String>
 
@@ -292,10 +432,6 @@ interface DataStoreManager {
 
     suspend fun setKillServiceOnExit(kill: Boolean)
 
-    val keepServiceAlive: Flow<String>
-
-    suspend fun setKeepServiceAlive(keep: Boolean)
-
     val crossfadeEnabled: Flow<String>
 
     suspend fun setCrossfadeEnabled(enabled: Boolean)
@@ -308,9 +444,59 @@ interface DataStoreManager {
 
     suspend fun setCrossfadeDjMode(enabled: Boolean)
 
+    /**
+     * When on, transitions *between tracks of the same album* skip the crossfade, so an album that
+     * was sequenced to run continuously keeps doing so. Edges still crossfade: the last album track
+     * into whatever follows it fades normally. Off by default — it changes how crossfade behaves
+     * for anyone already using it.
+     */
+    val crossfadeSkipAlbum: Flow<String>
+
+    suspend fun setCrossfadeSkipAlbum(enabled: Boolean)
+
+    /**
+     * When on, liking a song also queues it for offline download, at the existing download quality.
+     *
+     * Off by default — it spends storage and data without the user asking each time. Only applies
+     * from the moment it is switched on: songs liked earlier are left alone, and unliking never
+     * removes a download that already exists.
+     */
+    val autoDownloadLikedSongs: Flow<String>
+
+    suspend fun setAutoDownloadLikedSongs(enabled: Boolean)
+
+    /**
+     * Smart downloads (Android only) keep the songs played most, scored from local tracking,
+     * downloaded, and refresh them at most once a day when the app opens on an unmetered network.
+     * Off by default, for the same reason as [autoDownloadLikedSongs].
+     */
+    val smartDownloadsEnabled: Flow<String>
+
+    suspend fun setSmartDownloadsEnabled(enabled: Boolean)
+
+    /** How many songs Smart downloads keep: 25, 50 or 100. */
+    val smartDownloadsCount: Flow<Int>
+
+    suspend fun setSmartDownloadsCount(count: Int)
+
+    /** When Smart downloads last ran, in epoch milliseconds. 0 lets the next app open run them at once. */
+    val smartDownloadsLastRun: Flow<Long>
+
+    suspend fun setSmartDownloadsLastRun(time: Long)
+
     val youtubeSubtitleLanguage: Flow<String>
 
     suspend fun setYoutubeSubtitleLanguage(language: String)
+
+    /**
+     * Language code (e.g. "vi") of the audio track to prefer on videos that ship several — dubbed
+     * podcasts, mostly. Empty means the original track. Deliberately NOT defaulted to the app
+     * language the way [youtubeSubtitleLanguage] is: that would swap the speaker's own voice for an
+     * AI dub for every user whose app language has one.
+     */
+    val preferredAudioLanguage: Flow<String>
+
+    suspend fun setPreferredAudioLanguage(language: String)
 
     val helpBuildLyricsDatabase: Flow<String>
 
@@ -343,6 +529,51 @@ interface DataStoreManager {
     val customThemeColor: Flow<String>
 
     suspend fun setCustomThemeColor(argbHex: String)
+
+    /** One of [NOW_PLAYING_STYLE_SPOTIFY], [NOW_PLAYING_STYLE_M3_EXPRESSIVE], [NOW_PLAYING_STYLE_APPLE_MUSIC]. */
+    val nowPlayingStyle: Flow<String>
+
+    suspend fun setNowPlayingStyle(style: String)
+
+    /**
+     * One of [LYRICS_STYLE_CLASSIC], [LYRICS_STYLE_APPLE_MUSIC]. Deliberately independent of
+     * [nowPlayingStyle]: it governs how a lyric line is drawn, everywhere lyrics are drawn —
+     * the fullscreen sheet included, whichever player style is in use.
+     */
+    val lyricsStyle: Flow<String>
+
+    suspend fun setLyricsStyle(style: String)
+
+    /**
+     * Which languages get a Latin-script reading shown for their lyrics, as a comma-separated list
+     * of [org.simpmusic.lyrics.romanization.RomanizationLanguage] NAMES — empty string means the
+     * feature is off, which is the default.
+     *
+     * Stored as names rather than ordinals because an enum's ordinal is a position, not an
+     * identity: inserting a language into the middle of that enum would silently repoint every
+     * saved preference. Stored as ONE key rather than twelve booleans so reading it is a single
+     * flow rather than a combine of twelve.
+     */
+    val romanizationLanguages: Flow<String>
+
+    suspend fun setRomanizationLanguages(languages: String)
+
+    /**
+     * How far the audio a listener actually HEARS lags the player's own position, in milliseconds.
+     * Bluetooth is the reason this exists: the sink buffers, so at player position P the ear is
+     * hearing P - offset, and every lyric display was lighting its line that much too early.
+     *
+     * Applied at READ time — a display picks its line from `position - offset` — so nothing is
+     * written back into the cached [com.maxrave.domain.data.model.metadata.Line] rows, the
+     * community lyrics database never sees a local correction, and a change lands on the next
+     * frame instead of the next track.
+     *
+     * Signed and deliberately unbounded: positive pushes lyrics later (the Bluetooth case),
+     * negative pulls them earlier, and how far is the listener's call. 0 by default.
+     */
+    val lyricsOffsetMs: Flow<Int>
+
+    suspend fun setLyricsOffsetMs(offsetMs: Int)
 
     val explicitContentEnabled: Flow<String>
 
@@ -427,6 +658,16 @@ interface DataStoreManager {
         const val THEME_COLOR_CUSTOM = "CUSTOM"
 
         const val DEFAULT_THEME_COLOR_HEX = "FF8ECAE6"
+
+        const val NOW_PLAYING_STYLE_SPOTIFY = "SPOTIFY"
+        const val NOW_PLAYING_STYLE_M3_EXPRESSIVE = "M3_EXPRESSIVE"
+        const val NOW_PLAYING_STYLE_APPLE_MUSIC = "APPLE_MUSIC"
+
+        const val LYRICS_STYLE_CLASSIC = "CLASSIC"
+        const val LYRICS_STYLE_APPLE_MUSIC = "APPLE_MUSIC"
+
+        const val EQUALIZER_TYPE_BUILT_IN = "BUILT_IN"
+        const val EQUALIZER_TYPE_SYSTEM = "SYSTEM"
 
         const val CROSSFADE_DURATION_AUTO = 0
 
